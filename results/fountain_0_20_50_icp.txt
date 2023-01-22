@@ -1,0 +1,5 @@
+iter: 41
+time: 0.427337
+MSE: 115.777
+r_error: 7.89342
+t_error: 37

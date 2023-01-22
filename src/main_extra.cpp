@@ -29,11 +29,6 @@ using namespace std;
 using namespace nanoflann;
 using namespace std::chrono_literals;
 
-// https://github.com/Gregjksmith/Iterative-Closest-Point
-// https://github.com/nyakasko/icp_tricp/blob/main/src/main.cpp
-
-const int SAMPLES_DIM = 15;
-
 void removeRow(Eigen::MatrixXf& matrix, unsigned int rowToRemove)
 {
     unsigned int numRows = matrix.rows()-1;
@@ -73,18 +68,6 @@ pcl::visualization::PCLVisualizer::Ptr cloudsVis (pcl::PointCloud<pcl::PointXYZ>
   viewer->addCoordinateSystem (1.0);
   viewer->initCameraParameters ();
   return (viewer);
-}
-
-template <typename Der>
-void generateRandomPointCloud(Eigen::MatrixBase<Der> &mat, const size_t N,
-                              const size_t dim,
-                              const typename Der::Scalar max_range = 10) {
-  std::cout << "Generating " << N << " random points...";
-  mat.resize(N, dim);
-  for (size_t i = 0; i < N; i++)
-    for (size_t d = 0; d < dim; d++)
-      mat(i, d) = max_range * (rand() % 1000) / typename Der::Scalar(1000);
-  std::cout << "done\n";
 }
 
 double calculateError(std::vector<float> distances) {
@@ -320,8 +303,8 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr convertEigenToPCLCloud(Eigen::MatrixXf matri
 int main(int argc, char **argv) {
   
   // Randomize Seed
-  if (argc < 8) {
-    std::cerr << "Usage: " << argv[0] << " PC1 PC2 MAX_I noise_std rot_angle_deg trans_dist output" << std::endl;
+  if (argc < 7) {
+    std::cerr << "Usage: " << argv[0] << " PC1 PC2 MAX_I noise_std rot_angle_deg trans_dist" << std::endl;
     return 1;
   }
 
@@ -332,7 +315,6 @@ int main(int argc, char **argv) {
   float noise_std = atof(argv[4]);
   float theta = atof(argv[5])* M_PI / 180.0;
   float trans_dist = atof(argv[6]);
-  std::string output_file = argv[7];
 
   // rand seed
   srand(static_cast<unsigned int>(time(nullptr)));
@@ -376,12 +358,8 @@ int main(int argc, char **argv) {
   Eigen::MatrixXf source_pc = transposed_source_pc.transpose();
   Eigen::MatrixXf transformed_pc = transposed_transformed_pc.transpose();
   Eigen::MatrixXf new_source_pc_tricp;
-  std::cout << "Performing TrICP..." << std::endl;
-  source_pc = TrICP(source_pc, transformed_pc, MAX_I, transform);
-
-  // ICP
-  // std::cout << "Performing ICP..." << std::endl;
-  // Eigen::MatrixXf new_source_pc_icp = ICP(source_pc, transformed_pc, MAX_I, transform, outfileICP);
+  std::cout << "Performing ICP..." << std::endl;
+  source_pc = ICP(source_pc, transformed_pc, MAX_I, transform);
   
   for (int i=3; i < 9; i++){
     std::stringstream source_file;
@@ -396,7 +374,7 @@ int main(int argc, char **argv) {
 
     transformed_pc = transposed_source_pc.transpose();
 
-    std::cout << "Performing TrICP..." << std::endl;
+    std::cout << "Performing ICP..." << std::endl;
     new_source_pc_tricp = ICP(source_pc, transformed_pc, MAX_I, transform);
 
     source_pc = new_source_pc_tricp;
@@ -416,7 +394,6 @@ int main(int argc, char **argv) {
 
   viewer_tricp.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "new_source_cloud_tricp");
   viewer_tricp.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "transformed_cloud");
-  //viewer.setPosition(800, 400); // Setting visualiser window position
 
   pcl::visualization::PCLVisualizer::Ptr viewer1;
   // BUG in my environment? The last window closes so added a 4th arbitrary window

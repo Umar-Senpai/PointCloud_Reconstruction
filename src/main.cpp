@@ -29,11 +29,6 @@ using namespace std;
 using namespace nanoflann;
 using namespace std::chrono_literals;
 
-// https://github.com/Gregjksmith/Iterative-Closest-Point
-// https://github.com/nyakasko/icp_tricp/blob/main/src/main.cpp
-
-const int SAMPLES_DIM = 15;
-
 void removeRow(Eigen::MatrixXf& matrix, unsigned int rowToRemove)
 {
     unsigned int numRows = matrix.rows()-1;
@@ -45,6 +40,7 @@ void removeRow(Eigen::MatrixXf& matrix, unsigned int rowToRemove)
     matrix.conservativeResize(numRows,numCols);
 }
 
+// Taken from https://github.com/otherlab/pcl/blob/master/tools/add_gaussian_noise.cpp
 void addGaussianNoise (pcl::PointCloud<pcl::PointXYZ>::Ptr& xyz_cloud, double standard_deviation)
 {
   std::cout << "Adding Gaussian noise with mean 0.0 and standard deviation " << standard_deviation << std::endl;
@@ -75,18 +71,6 @@ pcl::visualization::PCLVisualizer::Ptr cloudsVis (pcl::PointCloud<pcl::PointXYZ>
   return (viewer);
 }
 
-template <typename Der>
-void generateRandomPointCloud(Eigen::MatrixBase<Der> &mat, const size_t N,
-                              const size_t dim,
-                              const typename Der::Scalar max_range = 10) {
-  std::cout << "Generating " << N << " random points...";
-  mat.resize(N, dim);
-  for (size_t i = 0; i < N; i++)
-    for (size_t d = 0; d < dim; d++)
-      mat(i, d) = max_range * (rand() % 1000) / typename Der::Scalar(1000);
-  std::cout << "done\n";
-}
-
 double calculateError(std::vector<float> distances) {
     double MSE = 0.;
     for (int i = 0; i < distances.size(); i++) {
@@ -107,8 +91,8 @@ double calculateTricpError (int NPo, std::vector<int> sorted_indices, std::vecto
 
 Eigen::MatrixXf ICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc, int MAX_I, Eigen::Matrix4f transform, std::ofstream& out) {
   auto time_start = std::chrono::high_resolution_clock::now();
-  using my_kd_tree_t = nanoflann::KDTreeEigenMatrixAdaptor<
-    Eigen::MatrixXf, 3, nanoflann::metric_L2>;
+  using my_kd_tree_t = nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf, 3, nanoflann::metric_L2>;
+
   Eigen::Matrix3f R_gt;
   R_gt << 
     transform(0,0), transform(0,1), transform(0,2),
@@ -123,15 +107,16 @@ Eigen::MatrixXf ICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc, i
 
   Eigen::Matrix3f R_total = Eigen::Matrix3f::Identity();
   Eigen::Vector3f t_total = Eigen::Vector3f::Zero();
-
   double mean_error = 0.0;
   double prev_error = 0.0;
   double tolerance = 0.00001;
   int counter;
+
   for (counter = 0; counter < MAX_I; counter++) {
     // Find NN
     std::vector<size_t> indices;
     std::vector<float> distances;
+
     for (int i = 0; i < source_pc.rows(); i++) {
       // Query point:
       vector<float> query(3);
@@ -147,11 +132,12 @@ Eigen::MatrixXf ICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc, i
       indices.push_back(closest_index);
       distances.push_back(closest_sqdist);
     }
+
     Eigen::MatrixXf new_transform = source_pc;
     for (int i = 0; i < source_pc.rows(); i++) {
-            new_transform.row(i) = transformed_pc.row(indices[i]);
-        }
-    // transformed_pc = new_transform;
+      new_transform.row(i) = transformed_pc.row(indices[i]);
+    }
+
     Eigen::Vector3f source_mean = source_pc.colwise().mean();
     Eigen::Vector3f transform_mean = new_transform.colwise().mean();
 
@@ -160,16 +146,20 @@ Eigen::MatrixXf ICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc, i
 
     MatrixXf cov = (centered_source.transpose() * centered_transform)/float(centered_transform.rows()-1);
 
-    // std::cout << cov << std::endl;
     Eigen::JacobiSVD<MatrixXf> svd(cov, Eigen::ComputeThinU | Eigen::ComputeThinV);
-    Eigen::Matrix3f R = svd.matrixV() * svd.matrixU().transpose();
-    
-    // std::cout << R << std::endl;
+    Eigen::MatrixXf V = svd.matrixV();
+    Eigen::Matrix3f R = V * svd.matrixU().transpose();
 
+    if (R.determinant() < 0 ){
+        V.col(2) *= -1;
+        R = V * svd.matrixU().transpose();
+    }
+    
     Eigen::Vector3f t = transform_mean - R * source_mean;
-    // std::cout << t << std::endl;
+
     R_total *= R;
     t_total += t;
+
     for(int i=0; i < source_pc.rows(); i++){
       source_pc.row(i) = (R * source_pc.row(i).transpose() + t).transpose();
     }
@@ -180,8 +170,6 @@ Eigen::MatrixXf ICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc, i
         break;
     }
     prev_error = mean_error;
-    // cloud.push_back(pcl::PointXYZ(X, Y, Z));
-    // std::cout << centered_source(0, 0) << centered_source(0, 1) << centered_source(0, 2) << std::endl;
   }
   auto time_finish = std::chrono::high_resolution_clock::now();
   
@@ -228,6 +216,7 @@ Eigen::MatrixXf TrICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc,
   double prev_error = 0.0;
   double tolerance = 0.00001;
   int counter;
+
   for (counter = 0; counter < MAX_I; counter++) {
     // Find NN
     std::vector<size_t> indices;
@@ -261,14 +250,10 @@ Eigen::MatrixXf TrICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc,
     Eigen::MatrixXf new_source(NPo, 3);
 
     for (int i = 0; i < NPo; i++) {
-            new_source.row(i) = source_pc.row(sorted_indices[i]);
-            new_transform.row(i) = transformed_pc.row(indices[sorted_indices[i]]);
-        }
+      new_source.row(i) = source_pc.row(sorted_indices[i]);
+      new_transform.row(i) = transformed_pc.row(indices[sorted_indices[i]]);
+    }
 
-    // for (int i = 0; i < source_pc.rows(); i++) {
-    //         new_transform.row(i) = transformed_pc.row(indices[i]);
-    //     }
-    // transformed_pc = new_transform;
     Eigen::Vector3f source_mean = new_source.colwise().mean();
     Eigen::Vector3f transform_mean = new_transform.colwise().mean();
 
@@ -277,13 +262,16 @@ Eigen::MatrixXf TrICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc,
 
     MatrixXf cov = (centered_source.transpose() * centered_transform)/float(centered_transform.rows()-1);
 
-    // std::cout << cov << std::endl;
     Eigen::JacobiSVD<MatrixXf> svd(cov, Eigen::ComputeThinU | Eigen::ComputeThinV);
-    Eigen::Matrix3f R = svd.matrixV() * svd.matrixU().transpose();
-    // std::cout << R << std::endl;
+    Eigen::MatrixXf V = svd.matrixV();
+    Eigen::Matrix3f R = V * svd.matrixU().transpose();
 
+    if (R.determinant() < 0 ){
+        V.col(2) *= -1;
+        R = V * svd.matrixU().transpose();
+    }
+    
     Eigen::Vector3f t = transform_mean - R * source_mean;
-    // std::cout << t << std::endl;
     
     R_total *= R;
     t_total += t;
@@ -298,9 +286,8 @@ Eigen::MatrixXf TrICP(Eigen::MatrixXf source_pc, Eigen::MatrixXf transformed_pc,
         break;
     }
     prev_error = mean_error;
-    // cloud.push_back(pcl::PointXYZ(X, Y, Z));
-    // std::cout << centered_source(0, 0) << centered_source(0, 1) << centered_source(0, 2) << std::endl;
   }
+
   auto time_finish = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> duration = (time_finish - time_start);
   std::cout << "--------------- TrICP ---------------" << std::endl;
@@ -332,7 +319,6 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr convertEigenToPCLCloud(Eigen::MatrixXf matri
 
 int main(int argc, char **argv) {
   
-  // Randomize Seed
   if (argc < 8) {
     std::cerr << "Usage: " << argv[0] << " PC1 PC2 MAX_I noise_std rot_angle_deg trans_dist output" << std::endl;
     return 1;
@@ -357,7 +343,6 @@ int main(int argc, char **argv) {
   if (pc1.substr(pc1.find_last_of(".") + 1) == "pcd") {
       file_is_pcd = true;
   }
-
   if (file_is_pcd) {
     pcl::io::loadPCDFile(pc1, *source_cloud);
     pcl::io::loadPCDFile(pc2, *transformed_cloud);
@@ -410,10 +395,7 @@ int main(int argc, char **argv) {
   new_source_cloud_icp = convertEigenToPCLCloud(new_source_pc_icp);
   new_source_cloud_tricp = convertEigenToPCLCloud(new_source_pc_tricp);
 
-  // Visualization
-  printf(  "\nPoint cloud colors :  white  = original point cloud\n"
-      "                        red  = transformed point cloud\n");
-  pcl::visualization::PCLVisualizer viewer ("Matrix transformation example");
+  pcl::visualization::PCLVisualizer viewer ("Ground Truth Point Clouds");
 
   // Define R,G,B colors for the point cloud
   pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> source_cloud_color_handler (source_cloud, 255, 255, 255);
@@ -446,16 +428,11 @@ int main(int argc, char **argv) {
   viewer_icp.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "transformed_cloud");
   viewer_tricp.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "new_source_cloud_tricp");
   viewer_tricp.setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "transformed_cloud");
-  //viewer.setPosition(800, 400); // Setting visualiser window position
 
   pcl::visualization::PCLVisualizer::Ptr viewer1;
   // BUG in my environment? The last window closes so added a 4th arbitrary window
   viewer1 = cloudsVis(source_cloud);
 
-
-  // pcl::visualization::PCLVisualizer::Ptr viewer;
-  // viewer = cloudsVis(cloud);
-  std::cout << PCL_VERSION_PRETTY << std::endl;
   while (!viewer1->wasStopped ())
   {
     viewer1->spinOnce();
