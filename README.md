@@ -1,4 +1,4 @@
-# PointCloud_Reconstruction
+# PointCloud Reconstruction using ICP and TrICP
 This repository contains the implementation of Iterative Closest Point (ICP) algorithm and its extension Trimmed ICP (TrICP). 
 
 ## Algorithms
